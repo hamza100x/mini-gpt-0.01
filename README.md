@@ -3,9 +3,15 @@
 A very simple GPT-like toy model that trains **only on your own essay** and then generates predictions.
 
 This version is intentionally tiny:
-- Character-level model
-- Bigram transitions (`current_char -> next_char`)
-- No external dependencies
+- Character-level neural model
+- Fixed character window over the essay
+- Only one dependency: `numpy`
+
+## Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
 
 ## 1) Add your essay
 
@@ -16,19 +22,19 @@ Put your full essay text in:
 ## 2) Train
 
 ```bash
-python mini_gpt.py train --input essay.txt --model model.json
+python mini_gpt.py train --input essay.txt --model model.npz
 ```
 
 ## 3) Predict / generate
 
 ```bash
-python mini_gpt.py predict --model model.json --prompt "In this essay" --length 300 --temperature 0.9
+python mini_gpt.py predict --model model.npz --prompt "In this essay" --length 300 --temperature 0.7
 ```
 
 ## 4) Chat (interactive query)
 
 ```bash
-python mini_gpt.py chat --model model.json --length 180 --temperature 0.7
+python mini_gpt.py chat --model model.npz --length 180 --temperature 0.7
 ```
 
 Or simply run this (defaults to chat):
