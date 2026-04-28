@@ -70,9 +70,9 @@ def init_model(
     rng = np.random.default_rng(seed)
     scale = 0.02
     return {
-        "W1": rng.normal(0.0, scale, size=(block_size * vocab_size, hidden_size)).astype(np.float32),
+        "W1": rng.normal(0.0, scale, (block_size * vocab_size, hidden_size)).astype(np.float32),
         "b1": np.zeros(hidden_size, dtype=np.float32),
-        "W2": rng.normal(0.0, scale, size=(hidden_size, vocab_size)).astype(np.float32),
+        "W2": rng.normal(0.0, scale, (hidden_size, vocab_size)).astype(np.float32),
         "b2": np.zeros(vocab_size, dtype=np.float32),
     }
 
@@ -94,6 +94,17 @@ def softmax(logits: np.ndarray) -> np.ndarray:
     return exp / np.sum(exp, axis=1, keepdims=True)
 
 
+def apply_temperature(probs: np.ndarray, temperature: float, rng: np.random.Generator) -> int:
+    """Apply temperature scaling and sample from distribution."""
+    if temperature <= 0:
+        return np.argmax(probs)
+    
+    logits = np.log(probs + 1e-12) / temperature
+    logits -= np.max(logits)
+    adjusted = np.exp(logits)
+    return rng.choice(len(adjusted), p=adjusted / np.sum(adjusted))
+
+
 def train_step(model: dict, x_batch: np.ndarray, y_batch: np.ndarray, vocab_size: int, learning_rate: float) -> float:
     x_flat = one_hot_flat(x_batch, vocab_size)
     h, logits = forward(model, x_flat)
@@ -102,7 +113,7 @@ def train_step(model: dict, x_batch: np.ndarray, y_batch: np.ndarray, vocab_size
 
     loss = -np.log(probs[np.arange(batch_size), y_batch] + 1e-12).mean()
 
-    dlogits = probs
+    dlogits = probs.copy()
     dlogits[np.arange(batch_size), y_batch] -= 1.0
     dlogits /= batch_size
 
@@ -211,25 +222,13 @@ def sample_from_probs(
     rng: np.random.Generator,
     top_k: int,
 ) -> int:
-    if temperature <= 0:
-        return int(np.argmax(probs))
-
     if top_k > 0 and top_k < len(probs):
         top_indices = np.argpartition(probs, -top_k)[-top_k:]
-        top_probs = probs[top_indices]
-        top_probs = top_probs / np.sum(top_probs)
-        logits = np.log(top_probs + 1e-12) / temperature
-        logits -= np.max(logits)
-        adjusted = np.exp(logits)
-        adjusted /= np.sum(adjusted)
-        choice = int(rng.choice(len(top_indices), p=adjusted))
-        return int(top_indices[choice])
-
-    logits = np.log(probs + 1e-12) / temperature
-    logits -= np.max(logits)
-    adjusted = np.exp(logits)
-    adjusted /= np.sum(adjusted)
-    return int(rng.choice(len(adjusted), p=adjusted))
+        probs = probs[top_indices]
+        probs = probs / np.sum(probs)
+        return top_indices[apply_temperature(probs, temperature, rng)]
+    
+    return apply_temperature(probs, temperature, rng)
 
 
 def generate_text(
@@ -248,7 +247,7 @@ def generate_text(
     vocab_size = len(vocab)
 
     if not prompt:
-        prompt = vocab[int(rng.integers(len(vocab)))]
+        prompt = vocab[rng.integers(len(vocab))]
 
     output = list(prompt)
 
@@ -325,18 +324,13 @@ def chat_command(
     while True:
         try:
             query = input("You: ").strip()
-        except EOFError:
+        except (EOFError, KeyboardInterrupt):
             print("\nSession closed.")
             break
-        except KeyboardInterrupt:
-            print("\nSession interrupted.")
-            break
 
-        if not query:
-            continue
-
-        if query.lower() in {"exit", "quit"}:
-            print("Bye.")
+        if not query or query.lower() in {"exit", "quit"}:
+            if query.lower() in {"exit", "quit"}:
+                print("Bye.")
             break
 
         answer = generate_text(model_bundle, query, length, temperature, rng, top_k)
@@ -411,6 +405,14 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
+    if not args.command:
+        args.command = "chat"
+        args.model = Path("model.npz")
+        args.length = 180
+        args.temperature = 0.45
+        args.seed = None
+        args.top_k = DEFAULT_TOP_K
+
     try:
         if args.command == "train":
             train_command(
@@ -439,14 +441,6 @@ def main() -> None:
                 temperature=args.temperature,
                 seed=args.seed,
                 top_k=args.top_k,
-            )
-        else:
-            chat_command(
-                model_path=Path("model.npz"),
-                length=180,
-                temperature=0.45,
-                seed=None,
-                top_k=DEFAULT_TOP_K,
             )
     except FileNotFoundError as exc:
         print(exc)
